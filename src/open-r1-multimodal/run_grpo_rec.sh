@@ -26,7 +26,7 @@ torchrun --nproc_per_node="4" \
     --output_dir output/$RUN_NAME \
     --model_name_or_path /mnt/workspace/xingjun.wxj/vlm_r1_work/models/Qwen2.5-VL-3B-Instruct \
     --dataset_name data_config/rec.yaml \
-    --image_root /mnt/workspace/xingjun.wxj/vlm_r1_work/VLM-R1/data/train2014 \
+    --image_root /mnt/workspace/xingjun.wxj/vlm_r1_work/VLM-R1/data \
     --max_prompt_length 1024 \
     --num_generations 8 \
     --per_device_train_batch_size 1 \
