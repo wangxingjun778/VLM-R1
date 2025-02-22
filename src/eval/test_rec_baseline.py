@@ -12,17 +12,20 @@ import random
 # MODEL_PATH=f"/data/shz/project/llama-factory/LLaMA-Factory/saves/qwen2_5_vl-3b/full/sft/checkpoint-{steps}" 
 # OUTPUT_PATH="./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_sft_{STEPS}.json"
 
-MODEL_PATH = "path/to/Qwen2.5-VL-3B-Instruct"
+# For the baseline: Qwen2.5-VL-3B-Instruct (no SFT)
+MODEL_PATH = "/mnt/nas2/xingjun.wxj/vlm_r1_work/models/Qwen2.5-VL-3B-Instruct"
 OUTPUT_PATH = "./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_baseline.json"
 
 BSZ=32
-DATA_ROOT = "path/to/rec_jsons_processed"
+DATA_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/rec_jsons_processed"
 
-TEST_DATASETS = ['refcoco_val', 'refcocop_val', 'refcocog_val']
-IMAGE_ROOT = "path/to/coco"
+# TEST_DATASETS = ['refcoco_val', 'refcocop_val', 'refcocog_val']
+# IMAGE_ROOT = "path/to/coco"
 
-# TEST_DATASETS = ['refgta_subsample']
-# IMAGE_ROOT = "path/to/refgta"
+TEST_DATASETS = ['refgta_subsample']
+IMAGE_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/refgta"
+
+DEVICE = 'cuda:1'
 
 random.seed(42)
 
@@ -31,7 +34,7 @@ model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     MODEL_PATH,
     torch_dtype=torch.bfloat16,
     attn_implementation="flash_attention_2",
-    device_map="cuda:0",
+    device_map=f"{DEVICE}",
 )
 
 # default processer
@@ -111,7 +114,7 @@ for ds in TEST_DATASETS:
             padding_side="left",
             return_tensors="pt",
         )
-        inputs = inputs.to("cuda:0")
+        inputs = inputs.to(f"{DEVICE}")
 
         # Inference: Generation of the output
         generated_ids = model.generate(**inputs, use_cache=True, max_new_tokens=256, do_sample=False)
