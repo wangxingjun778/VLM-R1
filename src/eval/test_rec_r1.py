@@ -22,12 +22,14 @@ IMAGE_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/refgta"
 
 random.seed(42)
 
+DEVICE = 'cuda:0'
+
 #We recommend enabling flash_attention_2 for better acceleration and memory saving, especially in multi-image and video scenarios.
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     MODEL_PATH,
     torch_dtype=torch.bfloat16,
     attn_implementation="flash_attention_2",
-    device_map="cuda:0",
+    device_map=f"{DEVICE}",
 )
 
 # default processer
@@ -106,7 +108,7 @@ for ds in TEST_DATASETS:
             padding=True,
             return_tensors="pt",
         )
-        inputs = inputs.to("cuda:0")
+        inputs = inputs.to(f"{DEVICE}")
 
         # Inference: Generation of the output
         generated_ids = model.generate(**inputs, use_cache=True, max_new_tokens=256, do_sample=False)
