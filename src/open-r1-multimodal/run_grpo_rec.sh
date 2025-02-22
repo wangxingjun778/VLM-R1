@@ -17,7 +17,8 @@ export LOG_PATH="./debug_log_$RUN_NAME.txt"
 # data: train2014/COCO_train2014_000000283267.jpg
 
 ## Records
-# 1. Got OOM with 4 * A100-80G under num_generations=8, per_device_train_batch_size=1, gradient_accumulation_steps=2
+# 1. For Qwen2.5-VL-3B-Instruct, got OOM with 4 * A100-80G under num_generations=8, set to 5
+# 2. For Qwen2.5-VL-7B-Instruct, got OOM with 8 * A100-80G under num_generations=8, set to 4
 
 
 ## Notes
@@ -36,7 +37,7 @@ torchrun --nproc_per_node="4" \
     --dataset_name data_config/rec.yaml \
     --image_root /mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data \
     --max_prompt_length 1024 \
-    --num_generations 5 \
+    --num_generations 4 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 2 \
     --logging_steps 1 \
