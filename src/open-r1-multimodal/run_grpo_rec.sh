@@ -16,6 +16,13 @@ export LOG_PATH="./debug_log_$RUN_NAME.txt"
 ## Examples
 # data: train2014/COCO_train2014_000000283267.jpg
 
+## Records
+# 1. Got OOM with 4 * A100-80G under num_generations=8, per_device_train_batch_size=1, gradient_accumulation_steps=2
+
+
+## Notes
+# Use latest version of trl: pip3 install "git+https://github.com/huggingface/trl.git@main"  (num_iterations set to 8)
+
 
 torchrun --nproc_per_node="4" \
     --nnodes="1" \
@@ -42,4 +49,5 @@ torchrun --nproc_per_node="4" \
     --num_train_epochs 2 \
     --run_name $RUN_NAME \
     --save_steps 100 \
-    --save_only_model true
+    --save_only_model true \
+    --resume_from_checkpoint /mnt/workspace/xingjun.wxj/vlm_r1_work/VLM-R1/src/open-r1-multimodal/output/Qwen2.5-VL-3B-GRPO-REC/checkpoint-2900
