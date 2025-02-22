@@ -1,25 +1,24 @@
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 import torch
 import json
 from tqdm import tqdm
 import re
 import os
-from pprint import pprint
 import random
 
 steps = 100
 print("Steps: ", steps)
-MODEL_PATH=f"path/to/Qwen2.5-VL-3B-GRPO-REC/checkpoint-{steps}" 
+MODEL_PATH=f"/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/src/open-r1-multimodal/output/Qwen2.5-VL-3B-GRPO-REC/checkpoint-{steps}"
 OUTPUT_PATH="./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_r1_{STEPS}.json"
 BSZ=32
-DATA_ROOT = "/data/shz/project/vlm-r1/VLM-R1/src/data/rec_jsons_processed"
+DATA_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/rec_jsons_processed"
 
 # TEST_DATASETS = ['refcoco_val', 'refcocop_val', 'refcocog_val']
 # IMAGE_ROOT = "/data/shz/dataset/coco"
 
 TEST_DATASETS = ['refgta_subsample']
-IMAGE_ROOT = "/data/shz/dataset/refgta"
+IMAGE_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/refgta"
 
 random.seed(42)
 
