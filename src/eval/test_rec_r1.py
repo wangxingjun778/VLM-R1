@@ -7,7 +7,7 @@ import re
 import os
 import random
 
-steps = 100
+steps = 6200
 print("Steps: ", steps)
 MODEL_PATH=f"/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/src/open-r1-multimodal/output/Qwen2.5-VL-3B-GRPO-REC/checkpoint-{steps}"
 OUTPUT_PATH="./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_r1_{STEPS}.json"
