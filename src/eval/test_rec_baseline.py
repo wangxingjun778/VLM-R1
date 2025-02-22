@@ -140,11 +140,14 @@ for ds in TEST_DATASETS:
         
         # Count correct answers
         correct = 0
+        iou_val = 0
         if model_answer is not None:
-            if not normalized and iou(model_answer, ground_truth) > 0.5:
-                correct = 1
-            elif normalized and iou(model_answer, ground_truth_normalized) > 0.5:
-                correct = 1
+            if not normalized:
+                iou_val = iou(model_answer, ground_truth)
+                correct = 1 if iou_val > 0.5 else 0
+            elif normalized:
+                iou_val = iou(model_answer, ground_truth_normalized)
+                correct = 1 if iou_val > 0.5 else 0
         correct_number += correct
         
         # Create a result dictionary for this example
@@ -153,6 +156,7 @@ for ds in TEST_DATASETS:
             'ground_truth': ground_truth,
             'model_output': original_output,
             'extracted_answer': model_answer,
+            'iou': iou_val,
             'correct': correct
         }
         final_output.append(result)
