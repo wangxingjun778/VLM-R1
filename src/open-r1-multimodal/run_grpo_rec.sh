@@ -37,7 +37,7 @@ torchrun --nproc_per_node="4" \
     --dataset_name data_config/rec.yaml \
     --image_root /mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data \
     --max_prompt_length 1024 \
-    --num_generations 4 \
+    --num_generations 3 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 2 \
     --logging_steps 1 \
