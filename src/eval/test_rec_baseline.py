@@ -8,9 +8,33 @@ import os
 from pprint import pprint
 import random
 
-# steps = 500
-# MODEL_PATH=f"/data/shz/project/llama-factory/LLaMA-Factory/saves/qwen2_5_vl-3b/full/sft/checkpoint-{steps}" 
-# OUTPUT_PATH="./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_sft_{STEPS}.json"
+
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+import argparse
+
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
+
+def setup_distributed():
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank) 
+    
+    dist.init_process_group(backend="nccl")
+    
+    world_size = dist.get_world_size()
+    rank = dist.get_rank()
+    
+    print(f"Process {rank}/{world_size} initialized on cuda:{local_rank}")
+    return local_rank, world_size, rank
+
+local_rank, world_size, rank = setup_distributed()
+device = f"cuda:{local_rank}"
+
+steps = 100
+MODEL_PATH=f"/data10/shz/project/LLaMA-Factory/saves/qwen2_5_vl-3b/full/sft/checkpoint-{steps}" 
+OUTPUT_PATH="./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_sft_{STEPS}.json"
 
 # For the baseline: Qwen2.5-VL-3B-Instruct (no SFT)
 MODEL_PATH = "/mnt/nas2/xingjun.wxj/vlm_r1_work/models/Qwen2.5-VL-3B-Instruct"
@@ -47,12 +71,8 @@ def extract_bbox_answer(content):
 
     if bbox_match:
         bbox = [float(bbox_match.group(1)), float(bbox_match.group(2)), float(bbox_match.group(3)), float(bbox_match.group(4))]
-        x1, y1, x2, y2 = bbox
-        if all(bbox[i] <= 1 for i in range(4)):
-            bbox = [int(x1 * 1000), int(y1 * 1000), int(x2 * 1000), int(y2 * 1000)]
-            return bbox, True
-        return bbox, False
-    return [0, 0, 0, 0], False
+        return bbox
+    return [0, 0, 0, 0]
 
 def iou(box1, box2):
     inter_x1 = max(box1[0], box2[0])
@@ -66,18 +86,27 @@ def iou(box1, box2):
     union = (box1[2]-box1[0])*(box1[3]-box1[1]) + (box2[2]-box2[0])*(box2[3]-box2[1]) - inter
     return float(inter)/union
 
-sample_num = 500
-
+num_samples = 2000
 for ds in TEST_DATASETS:
-    print(f"Processing {ds}...")
+    if rank == 0:
+        print(f"Processing {ds}...")
     ds_path = os.path.join(DATA_ROOT, f"{ds}.json")
     data = json.load(open(ds_path, "r"))
+    random.seed(42)
     random.shuffle(data)
-    QUESTION_TEMPLATE = "{Question}"
-    data = data[:sample_num]
+    data = data[:num_samples]
+    # QUESTION_TEMPLATE = "{Question}" if steps > 0 else "{Question} Please provide the bounding box coordinate in JSON format."
+    QUESTION_TEMPLATE = "{Question} Please provide the bounding box coordinate in JSON format."
+    
+    # Split data for distributed evaluation
+    per_rank_data = len(data) // world_size
+    start_idx = rank * per_rank_data
+    end_idx = start_idx + per_rank_data if rank < world_size - 1 else len(data)
+    rank_data = data[start_idx:end_idx]
+    
     messages = []
 
-    for x in data:
+    for x in rank_data:
         image_path = os.path.join(IMAGE_ROOT, x['image'])
         message = [
             # {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
@@ -96,10 +125,11 @@ for ds in TEST_DATASETS:
         }]
         messages.append(message)
 
+    rank_outputs = [] # List to store answers for this rank
     all_outputs = []  # List to store all answers
 
     # Process data
-    for i in tqdm(range(0, len(messages), BSZ)):
+    for i in tqdm(range(0, len(messages), BSZ), disable=rank != 0):
         batch_messages = messages[i:i + BSZ]
     
         # Preparation for inference
@@ -126,11 +156,29 @@ for ds in TEST_DATASETS:
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
         
-        all_outputs.extend(batch_output_text)
-        # print(f"Processed batch {i//BSZ + 1}/{(len(messages) + BSZ - 1)//BSZ}")
+        rank_outputs.extend(batch_output_text)
 
-    final_output = []
-    correct_number = 0
+    print(f"Rank {rank} has finished processing {len(rank_outputs)} examples")
+
+    # Gather all outputs from all ranks
+    all_outputs = [None] * len(data)
+    rank_results = [(start_idx + i, output) for i, output in enumerate(rank_outputs)]
+
+    gathered_results = [None] * world_size
+    dist.all_gather_object(gathered_results, rank_results)
+    
+    assert gathered_results[-1][-1][0] == len(data) - 1
+
+    # The main process will collect all results
+    if rank == 0:
+        for results in gathered_results:
+            for idx, output in results:
+                assert idx < len(all_outputs)
+                all_outputs[idx] = output
+        assert all_outputs[-1] is not None
+
+        final_output = []
+        correct_number = 0
 
     for input_example, model_output in zip(data, all_outputs):
         original_output = model_output
@@ -161,23 +209,26 @@ for ds in TEST_DATASETS:
         }
         final_output.append(result)
 
-    # Calculate and print accuracy
-    accuracy = correct_number / len(data) * 100
-    print(f"\nAccuracy of {ds}: {accuracy:.2f}%")
+        # Calculate and print accuracy
+        accuracy = correct_number / len(data) * 100
+        print(f"\nAccuracy of {ds}: {accuracy:.2f}%")
 
-    # Save results to a JSON file
-    output_path = OUTPUT_PATH.format(DATASET=ds)
-    output_dir = os.path.dirname(output_path)
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    with open(output_path, "w") as f:
-        json.dump({
-            'accuracy': accuracy,
-            'results': final_output
-        }, f, indent=2)
+        # Save results to a JSON file
+        output_path = OUTPUT_PATH.format(DATASET=ds, STEPS=steps)
+        output_dir = os.path.dirname(output_path)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        with open(output_path, "w") as f:
+            json.dump({
+                'accuracy': accuracy,
+                'results': final_output
+            }, f, indent=2)
 
-    print(f"Results saved to {output_path}")
-    print("-"*100)
+        print(f"Results saved to {output_path}")
+        print("-"*100)
+    
+    # Synchronize all processes
+    dist.barrier()
 
 
 

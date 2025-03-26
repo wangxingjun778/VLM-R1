@@ -14,8 +14,8 @@ OUTPUT_PATH="./logs/rec_results_{DATASET}_qwen2_5vl_3b_instruct_r1_{STEPS}.json"
 BSZ=32
 DATA_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/rec_jsons_processed"
 
-# TEST_DATASETS = ['refcoco_val', 'refcocop_val', 'refcocog_val']
-# IMAGE_ROOT = "/data/shz/dataset/coco"
+TEST_DATASETS = ['refcoco_val', 'refcocop_val', 'refcocog_val']
+IMAGE_ROOT = "/data10/shz/dataset/coco"
 
 TEST_DATASETS = ['refgta_subsample']
 IMAGE_ROOT = "/mnt/nas2/xingjun.wxj/vlm_r1_work/VLM-R1/data/refgta"
@@ -39,15 +39,14 @@ def extract_bbox_answer(content):
     # Try to find the bbox within <answer> tags, if can not find, return [0, 0, 0, 0]
     answer_tag_pattern = r'<answer>(.*?)</answer>'
     bbox_pattern = r'\{.*\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)]\s*.*\}'
-    content_answer_match = re.search(answer_tag_pattern, content)
+    content_answer_match = re.search(answer_tag_pattern, content, re.DOTALL)
     if content_answer_match:
         content_answer = content_answer_match.group(1).strip()
-        bbox_match = re.search(bbox_pattern, content_answer)
+        bbox_match = re.search(bbox_pattern, content_answer, re.DOTALL)
         if bbox_match:
             bbox = [int(bbox_match.group(1)), int(bbox_match.group(2)), int(bbox_match.group(3)), int(bbox_match.group(4))]
-            x1, y1, x2, y2 = bbox
-            return bbox, False
-    return [0, 0, 0, 0], False
+            return bbox
+    return [0, 0, 0, 0]
 
 def iou(box1, box2):
     inter_x1 = max(box1[0], box2[0])
@@ -61,18 +60,27 @@ def iou(box1, box2):
     union = (box1[2]-box1[0])*(box1[3]-box1[1]) + (box2[2]-box2[0])*(box2[3]-box2[1]) - inter
     return float(inter)/union
 
-sample_num = 500
-
+num_samples = 2000
 for ds in TEST_DATASETS:
-    print(f"Processing {ds}...")
+    if rank == 0:
+        print(f"Processing {ds}...")
     ds_path = os.path.join(DATA_ROOT, f"{ds}.json")
     data = json.load(open(ds_path, "r"))
+    random.seed(42)
     random.shuffle(data)
+    data = data[:num_samples]
+
     QUESTION_TEMPLATE = "{Question} First output the thinking process in <think> </think> tags and then output the final answer in <answer> </answer> tags. Output the final answer in JSON format."
-    data = data[:sample_num]
+
+    # Split data for distributed evaluation
+    per_rank_data = len(data) // world_size
+    start_idx = rank * per_rank_data
+    end_idx = start_idx + per_rank_data if rank < world_size - 1 else len(data)
+    rank_data = data[start_idx:end_idx]
+
     messages = []
 
-    for x in data:
+    for x in rank_data:
         image_path = os.path.join(IMAGE_ROOT, x['image'])
         message = [
             # {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
@@ -91,10 +99,11 @@ for ds in TEST_DATASETS:
         }]
         messages.append(message)
 
+    rank_outputs = [] # List to store answers for this rank
     all_outputs = []  # List to store all answers
 
     # Process data
-    for i in tqdm(range(0, len(messages), BSZ)):
+    for i in tqdm(range(0, len(messages), BSZ), disable=rank != 0):
         batch_messages = messages[i:i + BSZ]
     
         # Preparation for inference
@@ -106,6 +115,7 @@ for ds in TEST_DATASETS:
             images=image_inputs,
             videos=video_inputs,
             padding=True,
+            padding_side="left",
             return_tensors="pt",
         )
         inputs = inputs.to(f"{DEVICE}")
@@ -120,11 +130,29 @@ for ds in TEST_DATASETS:
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
         
-        all_outputs.extend(batch_output_text)
-        # print(f"Processed batch {i//BSZ + 1}/{(len(messages) + BSZ - 1)//BSZ}")
+        rank_outputs.extend(batch_output_text)
 
-    final_output = []
-    correct_number = 0
+    print(f"Rank {rank} has finished processing {len(rank_outputs)} examples")
+
+    # Gather all outputs from all ranks
+    all_outputs = [None] * len(data)
+    rank_results = [(start_idx + i, output) for i, output in enumerate(rank_outputs)]
+
+    gathered_results = [None] * world_size
+    dist.all_gather_object(gathered_results, rank_results)
+    
+    assert gathered_results[-1][-1][0] == len(data) - 1
+
+    # The main process will collect all results
+    if rank == 0:
+        for results in gathered_results:
+            for idx, output in results:
+                assert idx < len(all_outputs)
+                all_outputs[idx] = output
+        assert all_outputs[-1] is not None
+
+        final_output = []
+        correct_number = 0
 
     for input_example, model_output in zip(data, all_outputs):
         original_output = model_output
@@ -155,20 +183,26 @@ for ds in TEST_DATASETS:
         }
         final_output.append(result)
 
-    # Calculate and print accuracy
-    accuracy = correct_number / len(data) * 100
-    print(f"\nAccuracy of {ds}: {accuracy:.2f}%")
+        # Calculate and print accuracy
+        accuracy = correct_number / len(data) * 100
+        print(f"\nAccuracy of {ds}: {accuracy:.2f}%")
 
-    # Save results to a JSON file
-    output_path = OUTPUT_PATH.format(DATASET=ds, STEPS=steps)
-    with open(output_path, "w") as f:
-        json.dump({
-            'accuracy': accuracy,
-            'results': final_output
-        }, f, indent=2)
+        # Save results to a JSON file
+        output_path = OUTPUT_PATH.format(DATASET=ds, RUN_NAME=RUN_NAME, STEPS=steps)
+        output_dir = os.path.dirname(output_path)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        with open(output_path, "w") as f:
+            json.dump({
+                'accuracy': accuracy,
+                'results': final_output
+            }, f, indent=2)
 
-    print(f"Results saved to {output_path}")
-    print("-"*100)
+        print(f"Results saved to {output_path}")
+        print("-"*100)
+
+    # Synchronize all processes
+    dist.barrier()
 
 
 
